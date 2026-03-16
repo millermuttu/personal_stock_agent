@@ -43,6 +43,11 @@ class FinalVerdict(str, Enum):
     NO_RECOMMENDATION = "no_recommendation"
 
 
+class FinalSynthesisSource(str, Enum):
+    LLM = "llm"
+    HEURISTIC = "heuristic"
+
+
 class RiskLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -76,6 +81,7 @@ class SnapshotFeatures(BaseModel):
     technical_indicators: dict[str, float] = Field(default_factory=dict)
     fundamental_metrics: dict[str, float] = Field(default_factory=dict)
     news_items: list[str] = Field(default_factory=list)
+    sentiment_signals: dict[str, float] = Field(default_factory=dict)
     risk_metrics: dict[str, float] = Field(default_factory=dict)
 
 
@@ -116,6 +122,10 @@ class FinalVerdictReport(BaseModel):
     as_of: datetime
     status: RunStatus
     final_verdict: FinalVerdict
+    synthesis_source: FinalSynthesisSource = FinalSynthesisSource.HEURISTIC
+    model_version: str | None = None
+    prompt_version: str | None = None
+    llm_fallback_reason: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     risk_level: RiskLevel
     decision_factors: list[str] = Field(default_factory=list)
@@ -168,4 +178,3 @@ class AnalysisRunRecord(BaseModel):
     final_report: FinalVerdictReport | None = None
     error_summary: str | None = None
     attempt_log: dict[str, int] = Field(default_factory=dict)
-

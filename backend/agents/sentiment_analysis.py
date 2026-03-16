@@ -18,6 +18,7 @@ async def run(
     snapshot: DataSnapshot,
 ) -> AgentReportEnvelope:
     headlines = snapshot.features.news_items
+    provider_score = snapshot.features.sentiment_signals.get("headline_sentiment_score")
     if not headlines:
         return build_agent_report(
             run_id=run_id,
@@ -35,6 +36,7 @@ async def run(
                 "sentiment": "unclear",
                 "key_themes": [],
                 "sentiment_risks": ["no_recent_headlines"],
+                "provider_sentiment_score": provider_score,
             },
             errors=["missing_news_data"],
         )
@@ -46,12 +48,9 @@ async def run(
         positive_hits += sum(1 for token in POSITIVE_WORDS if token in normalized)
         negative_hits += sum(1 for token in NEGATIVE_WORDS if token in normalized)
 
-    if positive_hits > negative_hits:
-        sentiment = "positive"
-    elif negative_hits > positive_hits:
-        sentiment = "negative"
-    else:
-        sentiment = "neutral"
+    lexical_sentiment = _sentiment_from_hit_counts(positive_hits=positive_hits, negative_hits=negative_hits)
+    provider_sentiment = _sentiment_from_provider_score(provider_score)
+    sentiment = _combine_sentiment(lexical_sentiment=lexical_sentiment, provider_sentiment=provider_sentiment)
 
     themes = []
     if any("partnership" in item.lower() for item in headlines):
@@ -64,10 +63,25 @@ async def run(
         themes.append("general_coverage")
 
     risks = []
-    if sentiment == "negative":
+    if sentiment in {"negative", "mixed"}:
         risks.append("headline_tone_negative")
     if "market_uncertainty" in themes:
         risks.append("macro_headline_volatility")
+
+    key_points = [
+        f"Positive token hits={positive_hits}, negative token hits={negative_hits}",
+        f"Dominant themes: {', '.join(themes)}",
+    ]
+    if provider_score is not None:
+        key_points.append(f"Provider sentiment score={provider_score:.3f}")
+
+    signals = {
+        "headline_count": len(headlines),
+        "positive_hits": positive_hits,
+        "negative_hits": negative_hits,
+    }
+    if provider_score is not None:
+        signals["provider_sentiment_score"] = provider_score
 
     return build_agent_report(
         run_id=run_id,
@@ -79,20 +93,41 @@ async def run(
         status=AgentStatus.SUCCESS,
         confidence=0.6,
         summary=f"Sentiment is {sentiment} based on {len(headlines)} recent headlines.",
-        key_points=[
-            f"Positive token hits={positive_hits}, negative token hits={negative_hits}",
-            f"Dominant themes: {', '.join(themes)}",
-        ],
-        signals={
-            "headline_count": len(headlines),
-            "positive_hits": positive_hits,
-            "negative_hits": negative_hits,
-        },
+        key_points=key_points,
+        signals=signals,
         result={
             "sentiment": sentiment,
             "key_themes": themes,
             "sentiment_risks": risks,
+            "provider_sentiment_score": provider_score,
         },
         citations=headlines[:3],
     )
 
+
+def _sentiment_from_hit_counts(*, positive_hits: int, negative_hits: int) -> str:
+    if positive_hits > negative_hits:
+        return "positive"
+    if negative_hits > positive_hits:
+        return "negative"
+    return "neutral"
+
+
+def _sentiment_from_provider_score(score: float | None) -> str:
+    if score is None:
+        return "neutral"
+    if score >= 0.2:
+        return "positive"
+    if score <= -0.2:
+        return "negative"
+    return "neutral"
+
+
+def _combine_sentiment(*, lexical_sentiment: str, provider_sentiment: str) -> str:
+    if lexical_sentiment == provider_sentiment:
+        return lexical_sentiment
+    if lexical_sentiment == "neutral":
+        return provider_sentiment
+    if provider_sentiment == "neutral":
+        return lexical_sentiment
+    return "mixed"

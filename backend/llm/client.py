@@ -39,6 +39,10 @@ class LLMClient:
     def is_enabled(self) -> bool:
         return self._is_enabled
 
+    @property
+    def model_name(self) -> str:
+        return self._model
+
     async def synthesize_final_verdict(
         self,
         *,
@@ -86,4 +90,3 @@ class LLMClient:
             return LLMSynthesisOutput.model_validate(parsed)
         except Exception as exc:  # pylint: disable=broad-except
             raise LLMGenerationError(f"Failed to parse model JSON output: {exc}") from exc
-

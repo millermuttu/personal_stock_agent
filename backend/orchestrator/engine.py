@@ -8,10 +8,12 @@ from backend.agents import fundamental_analysis, risk_analysis, sentiment_analys
 from backend.agents.common import build_agent_report
 from backend.db.repositories import AgentWriteIsolationError, RunNotFoundError, RunRepository
 from backend.llm.client import LLMClient, LLMGenerationError, LLMUnavailableError
+from backend.llm.prompts import FINAL_VERDICT_PROMPT_VERSION
 from backend.models.schemas import (
     AgentReportEnvelope,
     AgentStatus,
     DataSnapshot,
+    FinalSynthesisSource,
     FinalVerdict,
     FinalVerdictReport,
     RecommendationConstraint,
@@ -32,6 +34,8 @@ AGENT_REGISTRY: dict[str, AgentWorker] = {
     "sentiment_analysis": sentiment_analysis.run,
     "risk_analysis": risk_analysis.run,
 }
+
+HEURISTIC_SYNTHESIS_VERSION = "heuristic_v1"
 
 
 class OrchestratorEngine:
@@ -169,6 +173,7 @@ class OrchestratorEngine:
             return self._no_recommendation_report(
                 run=run,
                 reason=f"Required agents missing or failed: {', '.join(missing_required)}",
+                llm_fallback_reason="required_agents_missing_or_failed",
             ), RunStatus.PARTIAL_SUCCESS
 
         risk_level, risk_constraint = self._extract_risk_state(run)
@@ -178,8 +183,10 @@ class OrchestratorEngine:
                 run=run,
                 reason="Risk agent returned BLOCK constraint.",
                 risk_level=risk_level,
+                llm_fallback_reason="risk_constraint_blocked",
             ), (RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS)
 
+        llm_fallback_reason: str | None = None
         if self._llm_client.is_enabled:
             try:
                 llm_output = await self._llm_client.synthesize_final_verdict(
@@ -207,6 +214,10 @@ class OrchestratorEngine:
                     as_of=run.snapshot.as_of if run.snapshot else utc_now(),
                     status=RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS,
                     final_verdict=llm_output.final_verdict,
+                    synthesis_source=FinalSynthesisSource.LLM,
+                    model_version=self._llm_client.model_name,
+                    prompt_version=FINAL_VERDICT_PROMPT_VERSION,
+                    llm_fallback_reason=None,
                     confidence=llm_output.confidence,
                     risk_level=llm_output.risk_level,
                     decision_factors=llm_output.decision_factors[:6],
@@ -215,12 +226,20 @@ class OrchestratorEngine:
                     summary=llm_output.summary,
                 )
                 return final_report, (RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS)
-            except (LLMUnavailableError, LLMGenerationError):
+            except (LLMUnavailableError, LLMGenerationError) as exc:
                 # Fall back to deterministic synthesis if the API is unavailable
                 # or model output cannot be parsed safely.
-                pass
+                llm_fallback_reason = self._classify_llm_fallback_reason(exc)
+        else:
+            llm_fallback_reason = "llm_unavailable_no_api_key"
 
-        return self._heuristic_synthesis(run, success_like_selected, risk_level, risk_constraint)
+        return self._heuristic_synthesis(
+            run,
+            success_like_selected,
+            risk_level,
+            risk_constraint,
+            llm_fallback_reason=llm_fallback_reason,
+        )
 
     def _heuristic_synthesis(
         self,
@@ -228,6 +247,8 @@ class OrchestratorEngine:
         success_like_selected: bool,
         risk_level: RiskLevel,
         risk_constraint: RecommendationConstraint,
+        *,
+        llm_fallback_reason: str | None = None,
     ) -> tuple[FinalVerdictReport, RunStatus]:
         reports = run.agent_reports
         votes = []
@@ -267,6 +288,7 @@ class OrchestratorEngine:
                 risk_level=risk_level,
                 decision_factors=decision_factors,
                 conflicting_signals=conflicts,
+                llm_fallback_reason=llm_fallback_reason or "heuristic_no_directional_votes",
             ), (RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS)
 
         counts = Counter(votes)
@@ -284,6 +306,10 @@ class OrchestratorEngine:
             as_of=run.snapshot.as_of if run.snapshot else utc_now(),
             status=RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS,
             final_verdict=verdict,
+            synthesis_source=FinalSynthesisSource.HEURISTIC,
+            model_version=None,
+            prompt_version=HEURISTIC_SYNTHESIS_VERSION,
+            llm_fallback_reason=llm_fallback_reason or "heuristic_policy",
             confidence=0.72 if verdict != FinalVerdict.NO_RECOMMENDATION else 0.45,
             risk_level=risk_level,
             decision_factors=decision_factors[:4],
@@ -324,6 +350,7 @@ class OrchestratorEngine:
         risk_level: RiskLevel = RiskLevel.UNKNOWN,
         decision_factors: list[str] | None = None,
         conflicting_signals: list[str] | None = None,
+        llm_fallback_reason: str | None = None,
     ) -> FinalVerdictReport:
         return FinalVerdictReport(
             run_id=run.run_id,
@@ -332,6 +359,10 @@ class OrchestratorEngine:
             as_of=run.snapshot.as_of if run.snapshot else utc_now(),
             status=RunStatus.PARTIAL_SUCCESS,
             final_verdict=FinalVerdict.NO_RECOMMENDATION,
+            synthesis_source=FinalSynthesisSource.HEURISTIC,
+            model_version=None,
+            prompt_version=HEURISTIC_SYNTHESIS_VERSION,
+            llm_fallback_reason=llm_fallback_reason,
             confidence=0.35,
             risk_level=risk_level,
             decision_factors=(decision_factors or []) + [reason],
@@ -339,3 +370,22 @@ class OrchestratorEngine:
             required_followups=["Collect fresher data and rerun required agents."],
             summary="System returned no_recommendation because safety/coverage thresholds were not met.",
         )
+
+    @staticmethod
+    def _classify_llm_fallback_reason(exc: Exception) -> str:
+        text = str(exc).lower()
+        if "insufficient_quota" in text or "exceeded your current quota" in text:
+            return "llm_error_insufficient_quota"
+        if "invalid_api_key" in text or "incorrect api key" in text:
+            return "llm_error_invalid_api_key"
+        if "rate limit" in text:
+            return "llm_error_rate_limited"
+        if "timeout" in text:
+            return "llm_error_timeout"
+        if "connection" in text or "connect call failed" in text:
+            return "llm_error_connection"
+        if "parse model json output" in text or "empty content" in text:
+            return "llm_error_invalid_output"
+        if "not configured" in text:
+            return "llm_unavailable_no_api_key"
+        return "llm_error_generation_failure"

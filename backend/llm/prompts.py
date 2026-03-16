@@ -16,6 +16,8 @@ Respect risk-first decision making.
 Return JSON that exactly matches the requested schema.
 """
 
+FINAL_VERDICT_PROMPT_VERSION = "v1.final_verdict.1"
+
 
 def build_final_verdict_messages(
     *,
@@ -62,4 +64,3 @@ def _compact_report(report: AgentReportEnvelope) -> dict[str, Any]:
         "result": report.result,
         "errors": report.errors,
     }
-
