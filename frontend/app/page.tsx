@@ -14,7 +14,7 @@ const TIMEFRAMES: Array<{ value: Timeframe; label: string; detail: string }> = [
 
 export default function HomePage() {
   const router = useRouter();
-  const [tickerInput, setTickerInput] = useState("AAPL");
+  const [tickerInput, setTickerInput] = useState("RELIANCE");
   const [timeframe, setTimeframe] = useState<Timeframe>("short");
   const [suggestions, setSuggestions] = useState<StockSearchResult[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -93,8 +93,10 @@ export default function HomePage() {
           Start New Analysis
         </h1>
         <p className="mt-3 max-w-2xl text-sm text-ink-soft md:text-base">
-          Submit ticker + timeframe to launch a run, then inspect orchestration progress on the run
-          details page.
+          Indian market (NSE/BSE) only. Submit an NSE ticker + timeframe to launch a run, then
+          inspect orchestration progress on the run details page. A bare symbol like{" "}
+          <span className="font-mono">RELIANCE</span> routes to NSE; add{" "}
+          <span className="font-mono">.BO</span> for BSE.
         </p>
       </section>
 
@@ -109,7 +111,7 @@ export default function HomePage() {
               <input
                 value={tickerInput}
                 onChange={(event) => setTickerInput(event.target.value)}
-                placeholder="AAPL"
+                placeholder="RELIANCE"
                 className="w-full rounded-xl border border-border bg-white px-3 py-2 font-display text-lg uppercase outline-none transition focus:border-accent"
               />
             </div>

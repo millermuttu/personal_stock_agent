@@ -13,22 +13,22 @@ from backend.models.schemas import (
     utc_now,
 )
 from backend.orchestrator.engine import OrchestratorEngine
-
-
-STOCK_CATALOG = [
-    StockSearchResult(ticker="AAPL", name="Apple Inc.", sector="Technology"),
-    StockSearchResult(ticker="MSFT", name="Microsoft Corporation", sector="Technology"),
-    StockSearchResult(ticker="NVDA", name="NVIDIA Corporation", sector="Technology"),
-    StockSearchResult(ticker="AMZN", name="Amazon.com, Inc.", sector="Consumer Discretionary"),
-    StockSearchResult(ticker="TSLA", name="Tesla, Inc.", sector="Consumer Discretionary"),
-    StockSearchResult(ticker="JPM", name="JPMorgan Chase & Co.", sector="Financials"),
-]
+from backend.services.providers.symbol_search import (
+    SymbolSearchProvider,
+    YahooSymbolSearchProvider,
+)
 
 
 class AnalysisService:
-    def __init__(self, repository: RunRepository, orchestrator: OrchestratorEngine) -> None:
+    def __init__(
+        self,
+        repository: RunRepository,
+        orchestrator: OrchestratorEngine,
+        symbol_search_provider: SymbolSearchProvider | None = None,
+    ) -> None:
         self._repository = repository
         self._orchestrator = orchestrator
+        self._symbol_search_provider = symbol_search_provider or YahooSymbolSearchProvider()
         self._tasks: set[asyncio.Task] = set()
 
     async def create_analysis(self, request: AnalysisRequest) -> CreateAnalysisResponse:
@@ -43,14 +43,7 @@ class AnalysisService:
         return self._repository.to_response(record)
 
     async def search_stocks(self, query: str = "") -> list[StockSearchResult]:
-        normalized = query.strip().lower()
-        if not normalized:
-            return STOCK_CATALOG
-        return [
-            item
-            for item in STOCK_CATALOG
-            if normalized in item.ticker.lower() or normalized in item.name.lower()
-        ]
+        return await self._symbol_search_provider.search(query)
 
     @staticmethod
     async def health() -> HealthResponse:

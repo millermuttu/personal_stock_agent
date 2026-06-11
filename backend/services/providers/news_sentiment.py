@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
@@ -31,46 +29,6 @@ class NewsSentimentProvider(Protocol):
         timeframe: Timeframe,
     ) -> NewsSentimentFetchResult:
         ...
-
-
-class MockNewsSentimentProvider:
-    provider_name = "mock_news_provider"
-
-    async def fetch_news_sentiment(
-        self,
-        *,
-        ticker: str,
-        timeframe: Timeframe,
-    ) -> NewsSentimentFetchResult:
-        seed = self._seed_from_inputs(ticker=ticker, timeframe=timeframe.value)
-        rng = random.Random(seed)
-        pool = [
-            f"{ticker} expands cloud partnership with enterprise customer",
-            f"{ticker} faces analyst debate on valuation after earnings",
-            f"{ticker} announces product roadmap update for next quarter",
-            f"Macro data drives sector-wide volatility impacting {ticker}",
-            f"{ticker} reports stronger-than-expected operating margin",
-            f"{ticker} raises guidance after stronger demand outlook",
-            f"{ticker} faces regulatory review creating investor concern",
-        ]
-        rng.shuffle(pool)
-        count = rng.randint(1, 6)
-        headlines = pool[:count]
-        quality_flags = []
-        if len(headlines) < 2:
-            quality_flags.append("low_news_coverage")
-        return NewsSentimentFetchResult(
-            provider_name=self.provider_name,
-            fetched_at=utc_now(),
-            headlines=headlines,
-            sentiment_signals=_derive_sentiment_signals(headlines),
-            quality_flags=quality_flags,
-        )
-
-    @staticmethod
-    def _seed_from_inputs(*, ticker: str, timeframe: str) -> int:
-        digest = hashlib.sha256(f"{ticker}:{timeframe}:news".encode("utf-8")).hexdigest()
-        return int(digest[:10], 16)
 
 
 class YahooNewsSentimentProvider:
@@ -169,29 +127,6 @@ class YahooNewsSentimentProvider:
             if isinstance(nested_headline, str) and nested_headline.strip():
                 return nested_headline
         return None
-
-
-class HybridNewsSentimentProvider:
-    def __init__(self, primary: NewsSentimentProvider, fallback: NewsSentimentProvider) -> None:
-        self._primary = primary
-        self._fallback = fallback
-
-    async def fetch_news_sentiment(
-        self,
-        *,
-        ticker: str,
-        timeframe: Timeframe,
-    ) -> NewsSentimentFetchResult:
-        try:
-            return await self._primary.fetch_news_sentiment(ticker=ticker, timeframe=timeframe)
-        except Exception as exc:  # pylint: disable=broad-except
-            fallback_result = await self._fallback.fetch_news_sentiment(
-                ticker=ticker,
-                timeframe=timeframe,
-            )
-            fallback_result.quality_flags.append(f"news_primary_failed:{type(exc).__name__}")
-            fallback_result.quality_flags.append("news_fallback_used")
-            return fallback_result
 
 
 def _derive_sentiment_signals(headlines: list[str]) -> dict[str, float]:

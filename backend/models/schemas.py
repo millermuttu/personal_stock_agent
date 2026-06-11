@@ -11,6 +11,23 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Indian exchange suffixes used by Yahoo Finance (NSE = .NS, BSE = .BO).
+INDIAN_EXCHANGE_SUFFIXES = (".NS", ".BO")
+DEFAULT_INDIAN_SUFFIX = ".NS"
+
+
+def normalize_indian_ticker(value: str) -> str:
+    """Normalize a user-entered symbol to a Yahoo Indian-exchange ticker.
+
+    Bare symbols are routed to NSE (``.NS``); symbols that already carry an
+    NSE/BSE suffix are preserved as-is.
+    """
+    normalized = value.strip().upper()
+    if normalized.endswith(INDIAN_EXCHANGE_SUFFIXES):
+        return normalized
+    return f"{normalized}{DEFAULT_INDIAN_SUFFIX}"
+
+
 class Timeframe(str, Enum):
     SHORT = "short"
     MEDIUM = "medium"
@@ -62,13 +79,13 @@ class RecommendationConstraint(str, Enum):
 
 
 class AnalysisRequest(BaseModel):
-    ticker: str = Field(min_length=1, max_length=10)
+    ticker: str = Field(min_length=1, max_length=20)
     timeframe: Timeframe
 
     @field_validator("ticker")
     @classmethod
     def normalize_ticker(cls, value: str) -> str:
-        return value.strip().upper()
+        return normalize_indian_ticker(value)
 
 
 class ProviderManifest(BaseModel):

@@ -1,27 +1,26 @@
 from __future__ import annotations
 
 import hashlib
-import random
 
 from backend.models.schemas import DataSnapshot, ProviderManifest, SnapshotFeatures, Timeframe
 from backend.services.providers.fundamentals import (
     FundamentalsProvider,
-    MockFundamentalsProvider,
+    YahooFundamentalsProvider,
 )
 from backend.services.providers.market_data import (
     MarketDataProvider,
-    MockMarketDataProvider,
+    YahooFinanceMarketDataProvider,
     calculate_max_drawdown,
     calculate_volatility,
 )
 from backend.services.providers.news_sentiment import (
-    MockNewsSentimentProvider,
     NewsSentimentProvider,
+    YahooNewsSentimentProvider,
 )
 
 
 class SnapshotBuilder:
-    """Builds normalized snapshots from provider data with fallback-safe defaults."""
+    """Builds normalized snapshots from real provider data (Yahoo Finance)."""
 
     def __init__(
         self,
@@ -29,13 +28,11 @@ class SnapshotBuilder:
         fundamentals_provider: FundamentalsProvider | None = None,
         news_provider: NewsSentimentProvider | None = None,
     ) -> None:
-        self._market_data_provider = market_data_provider or MockMarketDataProvider()
-        self._fundamentals_provider = fundamentals_provider or MockFundamentalsProvider()
-        self._news_provider = news_provider or MockNewsSentimentProvider()
+        self._market_data_provider = market_data_provider or YahooFinanceMarketDataProvider()
+        self._fundamentals_provider = fundamentals_provider or YahooFundamentalsProvider()
+        self._news_provider = news_provider or YahooNewsSentimentProvider()
 
     async def build(self, ticker: str, timeframe: Timeframe) -> DataSnapshot:
-        seed = self._seed_from_inputs(ticker=ticker, timeframe=timeframe.value)
-        rng = random.Random(seed)
         market_data = await self._market_data_provider.fetch_price_history(
             ticker=ticker,
             timeframe=timeframe,
@@ -62,9 +59,14 @@ class SnapshotBuilder:
         volatility = calculate_volatility(price_history)
         max_drawdown = calculate_max_drawdown(price_history)
 
+        beta = fundamentals_data.beta
+        if beta is None:
+            beta = 1.0
+            quality_flags.append("risk_beta_unavailable")
+
         risk_metrics = {
             "volatility": volatility,
-            "beta": round(rng.uniform(0.6, 2.1), 2),
+            "beta": round(beta, 4),
             "max_drawdown": max_drawdown,
         }
 
@@ -91,11 +93,6 @@ class SnapshotBuilder:
                 risk_metrics=risk_metrics,
             ),
         )
-
-    @staticmethod
-    def _seed_from_inputs(*, ticker: str, timeframe: str) -> int:
-        digest = hashlib.sha256(f"{ticker}:{timeframe}".encode("utf-8")).hexdigest()
-        return int(digest[:10], 16)
 
     @staticmethod
     def _technical_indicators(price_history: list[float]) -> tuple[dict[str, float], list[str]]:

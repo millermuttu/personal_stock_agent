@@ -1,2 +1,2 @@
-"""External and mock data providers."""
+"""Real market data providers (Yahoo Finance)."""
 

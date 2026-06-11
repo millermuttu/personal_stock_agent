@@ -509,7 +509,10 @@ function summarizePriceSeries(values: number[]): {
 }
 
 function formatCurrency(value: number): string {
-  return `$${value.toFixed(2)}`;
+  return `₹${value.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function formatSignedPercent(value: number): string {
@@ -522,7 +525,7 @@ function formatMetricValue(key: string, value: number): string {
     return `${(value * 100).toFixed(2)}%`;
   }
   if (key === "fcf") {
-    return `${value.toFixed(2)}B`;
+    return `₹${value.toFixed(2)}B`;
   }
   return value.toFixed(3);
 }

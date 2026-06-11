@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import math
-import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
@@ -26,29 +24,6 @@ class MarketDataFetchResult:
 class MarketDataProvider(Protocol):
     async def fetch_price_history(self, *, ticker: str, timeframe: Timeframe) -> MarketDataFetchResult:
         ...
-
-
-class MockMarketDataProvider:
-    provider_name = "mock_market_data_provider"
-
-    async def fetch_price_history(self, *, ticker: str, timeframe: Timeframe) -> MarketDataFetchResult:
-        seed = self._seed_from_inputs(ticker=ticker, timeframe=timeframe.value)
-        rng = random.Random(seed)
-        base_price = 90 + (seed % 120)
-        closes = [
-            round(base_price + (index * 0.45) + rng.uniform(-2.5, 2.5), 2)
-            for index in range(260)
-        ]
-        return MarketDataFetchResult(
-            provider_name=self.provider_name,
-            fetched_at=utc_now(),
-            closes=closes,
-        )
-
-    @staticmethod
-    def _seed_from_inputs(*, ticker: str, timeframe: str) -> int:
-        digest = hashlib.sha256(f"{ticker}:{timeframe}".encode("utf-8")).hexdigest()
-        return int(digest[:10], 16)
 
 
 class YahooFinanceMarketDataProvider:
@@ -146,26 +121,6 @@ class YahooFinanceMarketDataProvider:
         if not closes:
             raise MarketDataProviderError("no usable close prices in yahoo history")
         return closes
-
-
-class HybridMarketDataProvider:
-    def __init__(self, primary: MarketDataProvider, fallback: MarketDataProvider) -> None:
-        self._primary = primary
-        self._fallback = fallback
-
-    async def fetch_price_history(self, *, ticker: str, timeframe: Timeframe) -> MarketDataFetchResult:
-        try:
-            return await self._primary.fetch_price_history(ticker=ticker, timeframe=timeframe)
-        except Exception as exc:  # pylint: disable=broad-except
-            fallback_result = await self._fallback.fetch_price_history(
-                ticker=ticker,
-                timeframe=timeframe,
-            )
-            fallback_result.quality_flags.append(
-                f"market_data_primary_failed:{type(exc).__name__}"
-            )
-            fallback_result.quality_flags.append("market_data_fallback_used")
-            return fallback_result
 
 
 def calculate_volatility(closes: list[float]) -> float:

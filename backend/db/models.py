@@ -17,7 +17,7 @@ class AnalysisRunORM(Base):
 
     run_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     target_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    target_id: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    target_id: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
     timeframe: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -49,7 +49,7 @@ class DataSnapshotORM(Base):
         unique=True,
         index=True,
     )
-    target_id: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    target_id: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     provider_manifest_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     quality_flags_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)

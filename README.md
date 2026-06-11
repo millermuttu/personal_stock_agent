@@ -2,7 +2,26 @@
 
 Backend + frontend starter implementation for the architecture in `system_arch.md`.
 
-## Run locally
+**Market scope:** Indian equities only (NSE/BSE via Yahoo Finance). A bare symbol
+such as `RELIANCE` is routed to NSE (`RELIANCE.NS`); append `.BO` for BSE
+(`RELIANCE.BO`). Symbols that already carry an `.NS`/`.BO` suffix are preserved.
+
+## Quick start (recommended)
+
+```bash
+pip install -r requirements-dev.txt          # one-time: backend deps
+cp .env.example .env                          # then add your OPENAI_API_KEY (optional)
+./run.sh                                      # postgres + migrations + backend + frontend
+```
+
+Then open `http://localhost:3000`. `run.sh` also accepts `backend` or `frontend`
+to launch just one side. Press Ctrl+C to stop; the Postgres container is left
+running (stop it with `docker compose down`).
+
+Without `OPENAI_API_KEY` the app still runs and uses deterministic heuristic
+synthesis for the final verdict.
+
+## Run locally (manual)
 
 1. Create and activate a virtual environment.
 2. Install dependencies:
@@ -63,9 +82,10 @@ export CORS_ORIGINS="http://localhost:3000,http://127.0.0.1:3000"
 
 ## Run tests
 
+The test suite runs fully offline (in-memory repository + stub providers); it
+needs neither PostgreSQL nor network access:
+
 ```bash
-export DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5433/stock_agent"
-alembic upgrade head
 pytest -q
 ```
 
@@ -88,57 +108,13 @@ export OPENAI_TEMPERATURE="0.1"
 
 If `OPENAI_API_KEY` is not set, the orchestrator falls back to deterministic local synthesis.
 
-## Market data provider mode
+## Data providers
 
-Choose market data source with:
-
-```bash
-export MARKET_DATA_PROVIDER="hybrid"
-```
-
-Supported values:
-
-* `hybrid` (default): try Yahoo Finance first, then fall back to mock data
-* `yahoo`: use only Yahoo Finance
-* `mock`: use deterministic mock market data (recommended for offline tests)
-
-## Fundamentals provider mode
-
-Choose fundamentals source with:
-
-```bash
-export FUNDAMENTALS_PROVIDER="hybrid"
-```
-
-Supported values:
-
-* `hybrid` (default): try Yahoo Finance first, then fall back to mock fundamentals
-* `yahoo`: use only Yahoo fundamentals
-* `mock`: use deterministic mock fundamentals (recommended for offline tests)
-
-## News provider mode
-
-Choose news/sentiment source with:
-
-```bash
-export NEWS_PROVIDER="hybrid"
-```
-
-Supported values:
-
-* `hybrid` (default): try Yahoo Finance news first, then fall back to mock headlines
-* `yahoo`: use only Yahoo news headlines
-* `mock`: use deterministic mock headlines and sentiment signals (recommended for offline tests)
-
-## Real-data mode (Yahoo only)
-
-To force real provider usage only (no fallback), set:
-
-```bash
-export MARKET_DATA_PROVIDER="yahoo"
-export FUNDAMENTALS_PROVIDER="yahoo"
-export NEWS_PROVIDER="yahoo"
-```
+All market, fundamentals, and news/sentiment data comes from **real Yahoo
+Finance** lookups for **Indian (NSE/BSE) listings** — there is no mock or
+synthetic data path. If Yahoo cannot return usable data for a ticker, the run
+fails rather than fabricating values. Ticker search suggestions come from Yahoo's
+live symbol search, filtered to Indian exchanges (`.NS` / `.BO`).
 
 Optional reliability tuning:
 
@@ -149,12 +125,14 @@ export FUNDAMENTALS_TIMEOUT_SECONDS="15"
 export FUNDAMENTALS_MAX_ATTEMPTS="2"
 export NEWS_TIMEOUT_SECONDS="15"
 export NEWS_MAX_ATTEMPTS="2"
+export NEWS_MAX_HEADLINES="8"
 ```
 
 ## Notes
 
 * Current storage is PostgreSQL via SQLAlchemy async sessions.
-* Market, fundamentals, and news data are provider-driven (`yahoo`, `mock`, `hybrid`).
+* Market, fundamentals, and news data are sourced live from Yahoo Finance only.
+* `beta` is read from Yahoo fundamentals; if unavailable the snapshot defaults it to `1.0` and adds a `risk_beta_unavailable` quality flag.
 * The sentiment agent consumes both normalized headlines and provider-derived `sentiment_signals`.
 * Final report includes synthesis metadata: `synthesis_source`, `model_version`, `prompt_version`, and `llm_fallback_reason` when heuristic fallback is used.
 * Agent write isolation is enforced in repository updates and orchestrator state handling.
