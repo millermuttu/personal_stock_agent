@@ -93,11 +93,21 @@ class ProviderManifest(BaseModel):
     fetched_at: datetime
 
 
+class NewsArticle(BaseModel):
+    title: str
+    url: str | None = None
+    source: str | None = None
+    published_at: str | None = None
+
+
 class SnapshotFeatures(BaseModel):
     price_history: list[float] = Field(default_factory=list)
     technical_indicators: dict[str, float] = Field(default_factory=dict)
     fundamental_metrics: dict[str, float] = Field(default_factory=dict)
+    sector: str | None = None
+    industry: str | None = None
     news_items: list[str] = Field(default_factory=list)
+    news_articles: list[NewsArticle] = Field(default_factory=list)
     sentiment_signals: dict[str, float] = Field(default_factory=dict)
     risk_metrics: dict[str, float] = Field(default_factory=dict)
 
@@ -143,6 +153,8 @@ class FinalVerdictReport(BaseModel):
     model_version: str | None = None
     prompt_version: str | None = None
     llm_fallback_reason: str | None = None
+    # Net directional conviction in [-1, +1] (negative bearish, positive bullish).
+    bias_score: float | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     risk_level: RiskLevel
     decision_factors: list[str] = Field(default_factory=list)
@@ -165,15 +177,106 @@ class AnalysisRunResponse(BaseModel):
     created_at: datetime
     completed_at: datetime | None = None
     snapshot: DataSnapshot | None = None
+    selected_agents: list[str] = Field(default_factory=list)
     agent_reports: dict[str, AgentReportEnvelope | None] = Field(default_factory=dict)
     final_report: FinalVerdictReport | None = None
     error_summary: str | None = None
+
+
+class AnalysisRunSummary(BaseModel):
+    run_id: str
+    target_id: str
+    timeframe: Timeframe
+    status: RunStatus
+    created_at: datetime
+    completed_at: datetime | None = None
+    final_verdict: FinalVerdict | None = None
+    risk_level: RiskLevel | None = None
+    confidence: float | None = None
 
 
 class StockSearchResult(BaseModel):
     ticker: str
     name: str
     sector: str
+
+
+class PositionStatus(str, Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+
+
+class OpenInvestmentRequest(BaseModel):
+    ticker: str = Field(min_length=1, max_length=20)
+    amount: float = Field(gt=0)
+    run_id: str | None = None
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_ticker(cls, value: str) -> str:
+        return normalize_indian_ticker(value)
+
+
+class PaperPosition(BaseModel):
+    id: str
+    run_id: str | None = None
+    ticker: str
+    verdict: FinalVerdict | None = None
+    status: PositionStatus
+    entry_price: float
+    quantity: float
+    invested_amount: float
+    opened_at: datetime
+    closed_at: datetime | None = None
+    close_price: float | None = None
+    # Live valuation (current price for open positions; close price for closed).
+    current_price: float | None = None
+    current_value: float | None = None
+    pnl: float = 0.0
+    pnl_pct: float = 0.0
+
+
+class WalletSummary(BaseModel):
+    starting_cash: float
+    cash: float
+    invested: float
+    holdings_value: float
+    unrealized_pnl: float
+    realized_pnl: float
+    total_value: float
+    total_pnl: float
+    total_pnl_pct: float
+
+
+class InvestmentsResponse(BaseModel):
+    wallet: WalletSummary
+    positions: list[PaperPosition] = Field(default_factory=list)
+
+
+class PriceRange(str, Enum):
+    ONE_DAY = "1D"
+    FIVE_DAY = "5D"
+    ONE_WEEK = "1W"
+    ONE_MONTH = "1M"
+    THREE_MONTH = "3M"
+    SIX_MONTH = "6M"
+
+
+class CandleBar(BaseModel):
+    # UNIX epoch seconds (UTC); compatible with lightweight-charts UTCTimestamp.
+    time: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float | None = None
+
+
+class PriceHistoryResponse(BaseModel):
+    ticker: str
+    range: PriceRange
+    interval: str
+    bars: list[CandleBar] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):

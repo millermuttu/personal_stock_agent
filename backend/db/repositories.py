@@ -9,6 +9,7 @@ from backend.models.schemas import (
     AnalysisRequest,
     AnalysisRunRecord,
     AnalysisRunResponse,
+    AnalysisRunSummary,
     DataSnapshot,
     FinalVerdictReport,
     RunStatus,
@@ -25,6 +26,21 @@ AGENT_SLOTS: tuple[str, ...] = (
 )
 
 
+def summarize_run(record: AnalysisRunRecord) -> AnalysisRunSummary:
+    final_report = record.final_report
+    return AnalysisRunSummary(
+        run_id=record.run_id,
+        target_id=record.target_id,
+        timeframe=record.timeframe,
+        status=record.status,
+        created_at=record.created_at,
+        completed_at=record.completed_at,
+        final_verdict=final_report.final_verdict if final_report else None,
+        risk_level=final_report.risk_level if final_report else None,
+        confidence=final_report.confidence if final_report else None,
+    )
+
+
 class RunNotFoundError(Exception):
     pass
 
@@ -37,6 +53,8 @@ class RunRepository(Protocol):
     async def create_run(self, request: AnalysisRequest) -> AnalysisRunRecord: ...
 
     async def get_run(self, run_id: str) -> AnalysisRunRecord: ...
+
+    async def list_runs(self, *, limit: int = 50) -> list[AnalysisRunSummary]: ...
 
     async def update_status(
         self,
@@ -104,6 +122,15 @@ class InMemoryRunRepository:
             if run is None:
                 raise RunNotFoundError(run_id)
             return run
+
+    async def list_runs(self, *, limit: int = 50) -> list[AnalysisRunSummary]:
+        async with self._lock:
+            ordered = sorted(
+                self._runs.values(),
+                key=lambda record: record.created_at,
+                reverse=True,
+            )
+            return [summarize_run(record) for record in ordered[:limit]]
 
     async def update_status(
         self,
@@ -188,6 +215,7 @@ class InMemoryRunRepository:
             created_at=record.created_at,
             completed_at=record.completed_at,
             snapshot=record.snapshot,
+            selected_agents=record.selected_agents,
             agent_reports=record.agent_reports,
             final_report=record.final_report,
             error_summary=record.error_summary,

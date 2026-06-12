@@ -50,6 +50,7 @@ class LLMClient:
         required_agents: list[str],
         selected_agents: list[str],
         success_like_selected: bool,
+        baseline: dict | None = None,
     ) -> LLMSynthesisOutput:
         if not self._is_enabled or self._client is None:
             raise LLMUnavailableError("OPENAI_API_KEY is not configured")
@@ -59,6 +60,7 @@ class LLMClient:
             required_agents=required_agents,
             selected_agents=selected_agents,
             success_like_selected=success_like_selected,
+            baseline=baseline,
         )
 
         try:

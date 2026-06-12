@@ -1,8 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useDeferredValue, useEffect, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createAnalysis, searchStocks } from "../lib/api";
 import type { StockSearchResult, Timeframe } from "../lib/types";
 
@@ -19,11 +25,24 @@ export default function HomePage() {
   const [suggestions, setSuggestions] = useState<StockSearchResult[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [recentRunId, setRecentRunId] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
 
   const deferredTicker = useDeferredValue(tickerInput);
+  const comboboxRef = useRef<HTMLDivElement>(null);
+
+  // Close the suggestion dropdown on any click outside the combobox.
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (comboboxRef.current && !comboboxRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   useEffect(() => {
     const normalized = deferredTicker.trim().toUpperCase();
@@ -40,6 +59,7 @@ export default function HomePage() {
         const results = await searchStocks(normalized);
         if (!cancelled) {
           setSuggestions(results.slice(0, 6));
+          setActiveIndex(-1);
         }
       } catch (error) {
         if (!cancelled) {
@@ -74,7 +94,6 @@ export default function HomePage() {
         ticker: normalizedTicker,
         timeframe,
       });
-      setRecentRunId(created.run_id);
       router.push(`/runs/${created.run_id}`);
     } catch (error) {
       setSubmitError((error as Error).message);
@@ -83,7 +102,36 @@ export default function HomePage() {
     }
   };
 
+  const selectSuggestion = (ticker: string) => {
+    setTickerInput(ticker);
+    setIsOpen(false);
+    setActiveIndex(-1);
+  };
+
+  const handleTickerKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!isOpen || suggestions.length === 0) {
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => (index + 1) % suggestions.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => (index <= 0 ? suggestions.length - 1 : index - 1));
+    } else if (event.key === "Enter") {
+      if (activeIndex >= 0 && suggestions[activeIndex]) {
+        // Choose the highlighted suggestion instead of submitting the form.
+        event.preventDefault();
+        selectSuggestion(suggestions[activeIndex].ticker);
+      }
+    } else if (event.key === "Escape") {
+      setIsOpen(false);
+      setActiveIndex(-1);
+    }
+  };
+
   const selectedTimeframe = TIMEFRAMES.find((item) => item.value === timeframe);
+  const showDropdown = isOpen && tickerInput.trim().length > 0;
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-4 pb-12 pt-8 md:px-6">
@@ -100,20 +148,65 @@ export default function HomePage() {
         </p>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
+      <section className="max-w-xl">
         <div className="panel animate-riseIn p-5">
           <h2 className="font-display text-lg font-semibold">Run Form</h2>
           <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
-            <div>
+            <div ref={comboboxRef} className="relative">
               <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">
                 Ticker
               </label>
               <input
                 value={tickerInput}
-                onChange={(event) => setTickerInput(event.target.value)}
+                onChange={(event) => {
+                  setTickerInput(event.target.value);
+                  setIsOpen(true);
+                  setActiveIndex(-1);
+                }}
+                onFocus={() => setIsOpen(true)}
+                onKeyDown={handleTickerKeyDown}
                 placeholder="RELIANCE"
+                role="combobox"
+                aria-expanded={showDropdown}
+                aria-autocomplete="list"
+                aria-controls="ticker-suggestions"
+                autoComplete="off"
                 className="w-full rounded-xl border border-border bg-white px-3 py-2 font-display text-lg uppercase outline-none transition focus:border-accent"
               />
+              {showDropdown ? (
+                <ul
+                  id="ticker-suggestions"
+                  role="listbox"
+                  className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-auto rounded-xl border border-border bg-white py-1 shadow-panel"
+                >
+                  {isSearching && suggestions.length === 0 ? (
+                    <li className="px-3 py-2 text-sm text-ink-soft">Searching…</li>
+                  ) : null}
+                  {!isSearching && suggestions.length === 0 && !searchError ? (
+                    <li className="px-3 py-2 text-sm text-ink-soft">No matches</li>
+                  ) : null}
+                  {searchError ? (
+                    <li className="px-3 py-2 text-sm text-red-600">{searchError}</li>
+                  ) : null}
+                  {suggestions.map((item, index) => (
+                    <li key={item.ticker} role="option" aria-selected={index === activeIndex}>
+                      <button
+                        type="button"
+                        onMouseEnter={() => setActiveIndex(index)}
+                        onClick={() => selectSuggestion(item.ticker)}
+                        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition ${
+                          index === activeIndex ? "bg-orange-50 text-ink" : "text-ink hover:bg-canvas"
+                        }`}
+                      >
+                        <span className="font-mono font-semibold">{item.ticker}</span>
+                        <span className="min-w-0 flex-1 truncate text-right text-ink-soft">
+                          {item.name}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">
@@ -130,6 +223,9 @@ export default function HomePage() {
                   </option>
                 ))}
               </select>
+              {selectedTimeframe?.detail ? (
+                <p className="mt-1 text-xs text-ink-soft">{selectedTimeframe.detail}</p>
+              ) : null}
             </div>
             <button
               type="submit"
@@ -140,52 +236,7 @@ export default function HomePage() {
             </button>
           </form>
 
-          <div className="mt-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink-soft">
-              Ticker Suggestions
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {isSearching ? <span className="chip">Loading...</span> : null}
-              {!isSearching && suggestions.length === 0 ? (
-                <span className="chip">No matches</span>
-              ) : null}
-              {suggestions.map((item) => (
-                <button
-                  key={item.ticker}
-                  type="button"
-                  onClick={() => setTickerInput(item.ticker)}
-                  className="chip transition hover:border-accent hover:text-ink"
-                >
-                  {item.ticker} · {item.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="panel animate-riseIn p-5 [animation-delay:120ms]">
-          <h2 className="font-display text-lg font-semibold">Run Handoff</h2>
-          <p className="mt-2 text-sm text-ink-soft">
-            After submitting, you’ll be redirected to a dedicated run page:
-          </p>
-          <div className="mt-3 rounded-xl border border-border bg-white px-3 py-2 font-mono text-xs text-ink-soft">
-            /runs/&lt;run_id&gt;
-          </div>
-          <p className="mt-3 text-sm text-ink-soft">
-            {selectedTimeframe?.detail}
-          </p>
-
-          {recentRunId ? (
-            <div className="mt-4 rounded-xl border border-accent/30 bg-orange-50 px-3 py-2 text-sm">
-              Recent run:{" "}
-              <Link className="font-semibold text-accent underline" href={`/runs/${recentRunId}`}>
-                {recentRunId}
-              </Link>
-            </div>
-          ) : null}
-
-          {searchError ? <p className="mt-4 text-sm text-red-600">{searchError}</p> : null}
-          {submitError ? <p className="mt-2 text-sm text-red-600">{submitError}</p> : null}
+          {submitError ? <p className="mt-3 text-sm text-red-600">{submitError}</p> : null}
         </div>
       </section>
     </main>

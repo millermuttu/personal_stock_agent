@@ -17,12 +17,25 @@ from backend.models.schemas import (
     AnalysisRequest,
     AnalysisRunRecord,
     AnalysisRunResponse,
+    AnalysisRunSummary,
     DataSnapshot,
+    FinalVerdict,
     FinalVerdictReport,
+    RiskLevel,
     RunStatus,
     TargetType,
+    Timeframe,
     utc_now,
 )
+
+
+def _safe_enum(enum_cls, value):
+    if value is None:
+        return None
+    try:
+        return enum_cls(value)
+    except ValueError:
+        return None
 
 
 class PostgresRunRepository:
@@ -54,6 +67,31 @@ class PostgresRunRepository:
             if run_row is None:
                 raise RunNotFoundError(run_id)
             return self._to_record(run_row)
+
+    async def list_runs(self, *, limit: int = 50) -> list[AnalysisRunSummary]:
+        async with self._session_factory() as session:
+            stmt = (
+                select(AnalysisRunORM)
+                .order_by(AnalysisRunORM.created_at.desc())
+                .limit(limit)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._row_to_summary(row) for row in rows]
+
+    @staticmethod
+    def _row_to_summary(run_row: AnalysisRunORM) -> AnalysisRunSummary:
+        final = run_row.final_report_json or {}
+        return AnalysisRunSummary(
+            run_id=run_row.run_id,
+            target_id=run_row.target_id,
+            timeframe=Timeframe(run_row.timeframe),
+            status=RunStatus(run_row.status),
+            created_at=run_row.created_at,
+            completed_at=run_row.completed_at,
+            final_verdict=_safe_enum(FinalVerdict, final.get("final_verdict")),
+            risk_level=_safe_enum(RiskLevel, final.get("risk_level")),
+            confidence=final.get("confidence") if isinstance(final.get("confidence"), (int, float)) else None,
+        )
 
     async def update_status(
         self,
@@ -189,6 +227,7 @@ class PostgresRunRepository:
             created_at=record.created_at,
             completed_at=record.completed_at,
             snapshot=record.snapshot,
+            selected_agents=record.selected_agents,
             agent_reports=record.agent_reports,
             final_report=record.final_report,
             error_summary=record.error_summary,

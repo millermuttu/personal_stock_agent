@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routers.analysis import router as analysis_router
 from backend.api.routers.health import router as health_router
+from backend.api.routers.investments import router as investments_router
 from backend.api.routers.stocks import router as stocks_router
 from backend.db.session import create_all_tables
 
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(stocks_router)
     app.include_router(analysis_router)
+    app.include_router(investments_router)
     return app
 
 

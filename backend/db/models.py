@@ -59,6 +59,23 @@ class DataSnapshotORM(Base):
     run: Mapped[AnalysisRunORM] = relationship(back_populates="snapshot")
 
 
+class PaperPositionORM(Base):
+    __tablename__ = "paper_positions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    ticker: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="open", index=True)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+    invested_amount: Mapped[float] = mapped_column(Float, nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    close_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 class AgentReportORM(Base):
     __tablename__ = "agent_reports"
     __table_args__ = (

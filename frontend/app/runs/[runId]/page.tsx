@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getAnalysis } from "../../../lib/api";
-import type { AgentReportEnvelope, AnalysisRunResponse } from "../../../lib/types";
+import type { AgentReportEnvelope, AnalysisRunResponse, NewsArticle } from "../../../lib/types";
+import { ExecutionTimeline } from "./ExecutionTimeline";
+import { InvestPanel } from "./InvestPanel";
+import { PriceChart } from "./PriceChart";
 
 const TERMINAL_STATUSES = new Set(["completed", "partial_success", "failed"]);
-const STATUS_FLOW = ["queued", "running", "completed"];
 
 export default function RunDetailsPage() {
   const params = useParams<{ runId: string }>();
@@ -60,6 +62,7 @@ export default function RunDetailsPage() {
   const qualityFlags = run?.snapshot?.data_quality_flags ?? [];
   const sentimentSignals = run?.snapshot?.features.sentiment_signals ?? {};
   const newsItems = run?.snapshot?.features.news_items ?? [];
+  const newsArticles = run?.snapshot?.features.news_articles ?? [];
   const priceHistory = run?.snapshot?.features.price_history ?? [];
   const technicalIndicators = run?.snapshot?.features.technical_indicators ?? {};
   const fundamentalMetrics = run?.snapshot?.features.fundamental_metrics ?? {};
@@ -91,33 +94,18 @@ export default function RunDetailsPage() {
       </section>
 
       <section className="panel animate-riseIn p-5">
-        <h2 className="font-display text-lg font-semibold">Execution Timeline</h2>
-        <div className="mt-4 grid gap-2 md:grid-cols-3">
-          {STATUS_FLOW.map((step) => (
-            <div
-              key={step}
-              className={`rounded-xl border px-3 py-2 text-sm ${timelineStepClass(
-                step,
-                run?.status,
-              )}`}
-            >
-              {step}
-            </div>
-          ))}
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <span className="chip">
-            {run ? `status: ${run.status}` : loading ? "status: loading" : "status: unknown"}
-          </span>
-          {run?.status === "running" || run?.status === "queued" ? (
-            <span className="chip border-accent/30 text-accent-2">polling</span>
-          ) : null}
-          {run?.error_summary ? (
-            <span className="chip border-rose-300 bg-rose-50 text-rose-800">
-              {run.error_summary}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold">Execution Timeline</h2>
+          <div className="flex items-center gap-2">
+            <span className="chip">
+              {run ? `status: ${run.status}` : loading ? "status: loading" : "status: unknown"}
             </span>
-          ) : null}
+            {run?.status === "running" || run?.status === "queued" ? (
+              <span className="chip border-accent/30 text-accent-2">polling</span>
+            ) : null}
+          </div>
         </div>
+        <ExecutionTimeline run={run} loading={loading} runError={runError} />
         {run?.final_report ? (
           <div className={`mt-4 rounded-xl border px-4 py-3 ${finalVerdictClass}`}>
             <p className="text-xs font-semibold uppercase tracking-[0.12em]">Final Verdict</p>
@@ -125,7 +113,10 @@ export default function RunDetailsPage() {
               {run.final_report.final_verdict.toUpperCase()}
             </p>
             <p className="mt-1 text-sm">Confidence: {(run.final_report.confidence * 100).toFixed(0)}%</p>
-            <p className="mt-1 text-xs uppercase tracking-[0.12em] text-ink-soft">
+            {run.final_report.bias_score !== null ? (
+              <ConvictionMeter score={run.final_report.bias_score} />
+            ) : null}
+            <p className="mt-2 text-xs uppercase tracking-[0.12em] text-ink-soft">
               Source: {run.final_report.synthesis_source}
             </p>
             {run.final_report.model_version ? (
@@ -146,18 +137,23 @@ export default function RunDetailsPage() {
             ) : null}
           </div>
         ) : null}
-        {runError ? <p className="mt-3 text-sm text-red-600">{runError}</p> : null}
       </section>
+
+      {run && (run.status === "completed" || run.status === "partial_success") ? (
+        <section className="mt-4">
+          <InvestPanel ticker={run.target_id} runId={run.run_id} />
+        </section>
+      ) : null}
 
       {run ? (
         <section className="mt-4 grid gap-4 md:grid-cols-[1.3fr_1fr]">
           <div className="panel animate-riseIn p-5 [animation-delay:80ms]">
             <h3 className="font-display text-lg font-semibold">Price Trend</h3>
             <p className="mt-1 text-xs uppercase tracking-[0.1em] text-ink-soft">
-              Snapshot points: {priceHistory.length}
+              Historical OHLC · {run.target_id}
             </p>
-            <div className="mt-4 rounded-xl border border-border bg-white p-3">
-              <PriceSparkline prices={priceHistory} />
+            <div className="mt-4">
+              <PriceChart ticker={run.target_id} />
             </div>
           </div>
           <div className="panel animate-riseIn p-5 [animation-delay:100ms]">
@@ -260,17 +256,26 @@ export default function RunDetailsPage() {
                 </div>
               ) : null}
             </div>
-            {newsItems.length ? (
+            {newsArticles.length || newsItems.length ? (
               <>
                 <p className="mt-4 text-xs font-semibold uppercase tracking-[0.12em] text-ink-soft">
                   Headlines
                 </p>
-                <ul className="mt-2 space-y-2 text-sm text-ink-soft">
-                  {newsItems.slice(0, 4).map((headline) => (
-                    <li key={headline} className="rounded-lg border border-border px-3 py-2">
-                      {headline}
-                    </li>
-                  ))}
+                <ul className="mt-2 space-y-2 text-sm">
+                  {newsArticles.length
+                    ? newsArticles.slice(0, 6).map((article, index) => (
+                        <li key={`${article.title}-${index}`}>
+                          <HeadlineItem article={article} />
+                        </li>
+                      ))
+                    : newsItems.slice(0, 6).map((headline) => (
+                        <li
+                          key={headline}
+                          className="rounded-lg border border-border px-3 py-2 text-ink-soft"
+                        >
+                          {headline}
+                        </li>
+                      ))}
                 </ul>
               </>
             ) : null}
@@ -289,43 +294,6 @@ export default function RunDetailsPage() {
         </section>
       ) : null}
     </main>
-  );
-}
-
-function PriceSparkline({ prices }: { prices: number[] }) {
-  if (prices.length < 2) {
-    return (
-      <div className="flex h-[180px] items-center justify-center text-sm text-ink-soft">
-        Not enough points to render chart.
-      </div>
-    );
-  }
-
-  const width = 720;
-  const height = 180;
-  const path = sparklinePath(prices, width, height, 14);
-  const trendUp = prices[prices.length - 1] >= prices[0];
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-[180px] w-full">
-      <defs>
-        <linearGradient id="lineTone" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor={trendUp ? "#136f63" : "#c2485f"} />
-          <stop offset="100%" stopColor={trendUp ? "#2f9d7c" : "#ef6b74"} />
-        </linearGradient>
-      </defs>
-      <rect x="0" y="0" width={width} height={height} fill="#ffffff" />
-      <path d={path} fill="none" stroke="url(#lineTone)" strokeWidth="3" />
-      <line
-        x1="0"
-        y1={height - 14}
-        x2={width}
-        y2={height - 14}
-        stroke="#d8e1ee"
-        strokeDasharray="4 5"
-        strokeWidth="1"
-      />
-    </svg>
   );
 }
 
@@ -415,26 +383,81 @@ function AgentCard({
   );
 }
 
-function timelineStepClass(step: string, status: string | undefined): string {
-  if (!status) {
-    return "border-border bg-white text-ink-soft";
+function ConvictionMeter({ score }: { score: number }) {
+  const clamped = Math.max(-1, Math.min(1, score));
+  const pct = ((clamped + 1) / 2) * 100; // 50% = neutral
+  const positive = clamped >= 0;
+  const label = clamped > 0.05 ? "Bullish" : clamped < -0.05 ? "Bearish" : "Neutral";
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.1em] opacity-80">
+        <span>Bearish</span>
+        <span className="font-semibold">
+          {label} · {clamped >= 0 ? "+" : ""}
+          {clamped.toFixed(2)}
+        </span>
+        <span>Bullish</span>
+      </div>
+      <div className="relative mt-1 h-2 overflow-hidden rounded-full bg-white/60">
+        <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-black/25" />
+        <div
+          className={`absolute top-0 h-full ${positive ? "bg-emerald-600" : "bg-rose-600"}`}
+          style={
+            positive
+              ? { left: "50%", width: `${pct - 50}%` }
+              : { left: `${pct}%`, width: `${50 - pct}%` }
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function HeadlineItem({ article }: { article: NewsArticle }) {
+  const meta = [article.source, formatPublished(article.published_at)]
+    .filter((part): part is string => !!part)
+    .join(" · ");
+
+  if (!article.url) {
+    return (
+      <div className="rounded-lg border border-border px-3 py-2">
+        <p className="text-ink">{article.title}</p>
+        {meta ? <p className="mt-0.5 text-xs text-ink-soft">{meta}</p> : null}
+      </div>
+    );
   }
 
-  const progressIndex =
-    status === "queued" ? 0 : status === "running" ? 1 : status === "completed" || status === "partial_success" || status === "failed" ? 2 : -1;
-  const stepIndex = STATUS_FLOW.indexOf(step);
-  const active = stepIndex <= progressIndex;
+  return (
+    <a
+      href={article.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group block rounded-lg border border-border px-3 py-2 transition hover:border-accent hover:bg-orange-50"
+    >
+      <p className="text-ink group-hover:text-accent">
+        {article.title}
+        <span aria-hidden className="ml-1 text-ink-soft group-hover:text-accent">
+          ↗
+        </span>
+      </p>
+      {meta ? <p className="mt-0.5 text-xs text-ink-soft">{meta}</p> : null}
+    </a>
+  );
+}
 
-  if (!active) {
-    return "border-border bg-white text-ink-soft";
+function formatPublished(value: string | null): string | null {
+  if (!value) {
+    return null;
   }
-  if (status === "failed" && step === "completed") {
-    return "border-rose-300 bg-rose-50 text-rose-900";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
   }
-  if (status === "partial_success" && step === "completed") {
-    return "border-amber-300 bg-amber-50 text-amber-900";
-  }
-  return "border-emerald-300 bg-emerald-50 text-emerald-900";
+  return parsed.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function verdictClass(verdict: string | undefined): string {
@@ -472,22 +495,6 @@ function orderedEntries(
     output.push([key, value]);
   }
   return output;
-}
-
-function sparklinePath(values: number[], width: number, height: number, padding: number): string {
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const xStep = (width - 2 * padding) / (values.length - 1);
-  const valueSpan = max - min || 1;
-
-  return values
-    .map((value, index) => {
-      const x = padding + index * xStep;
-      const normalizedY = (value - min) / valueSpan;
-      const y = height - padding - normalizedY * (height - 2 * padding);
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
 }
 
 function summarizePriceSeries(values: number[]): {

@@ -1,12 +1,21 @@
 import type {
   AnalysisRunResponse,
+  AnalysisRunSummary,
   CreateAnalysisResponse,
+  InvestmentsResponse,
+  PaperPosition,
+  PriceHistoryResponse,
+  PriceRange,
   StockSearchResult,
   Timeframe,
 } from "./types";
 import {
   normalizeAnalysisRun,
   normalizeCreateAnalysisResponse,
+  normalizeInvestments,
+  normalizePaperPositionResponse,
+  normalizePriceHistory,
+  normalizeRunSummaries,
   normalizeStockSearchResults,
 } from "./normalize";
 
@@ -55,4 +64,34 @@ export function createAnalysis(payload: {
 
 export function getAnalysis(runId: string): Promise<AnalysisRunResponse> {
   return request<unknown>(`/analysis/${runId}`).then(normalizeAnalysisRun);
+}
+
+export function listRuns(limit = 50): Promise<AnalysisRunSummary[]> {
+  return request<unknown>(`/analysis?limit=${limit}`).then(normalizeRunSummaries);
+}
+
+export function getCandles(ticker: string, range: PriceRange): Promise<PriceHistoryResponse> {
+  const encoded = encodeURIComponent(ticker);
+  return request<unknown>(`/stocks/${encoded}/candles?range=${range}`).then(normalizePriceHistory);
+}
+
+export function listInvestments(): Promise<InvestmentsResponse> {
+  return request<unknown>("/investments").then(normalizeInvestments);
+}
+
+export function openInvestment(payload: {
+  ticker: string;
+  amount: number;
+  run_id?: string;
+}): Promise<PaperPosition> {
+  return request<unknown>("/investments", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }).then(normalizePaperPositionResponse);
+}
+
+export function closeInvestment(positionId: string): Promise<PaperPosition> {
+  return request<unknown>(`/investments/${positionId}/close`, {
+    method: "POST",
+  }).then(normalizePaperPositionResponse);
 }

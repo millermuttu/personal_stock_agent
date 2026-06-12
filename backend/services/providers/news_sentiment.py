@@ -13,11 +13,20 @@ class NewsSentimentProviderError(Exception):
 
 
 @dataclass
+class NewsArticle:
+    title: str
+    url: str | None = None
+    source: str | None = None
+    published_at: str | None = None
+
+
+@dataclass
 class NewsSentimentFetchResult:
     provider_name: str
     fetched_at: datetime
     headlines: list[str]
     sentiment_signals: dict[str, float]
+    articles: list[NewsArticle] = field(default_factory=list)
     quality_flags: list[str] = field(default_factory=list)
 
 
@@ -51,11 +60,11 @@ class YahooNewsSentimentProvider:
         timeframe: Timeframe,
     ) -> NewsSentimentFetchResult:
         del timeframe
-        headlines: list[str] | None = None
+        articles: list[NewsArticle] | None = None
         last_exc: Exception | None = None
         for _ in range(self._max_attempts):
             try:
-                headlines = await asyncio.wait_for(
+                articles = await asyncio.wait_for(
                     asyncio.to_thread(self._fetch_sync, ticker, self._max_headlines),
                     timeout=self._timeout_seconds,
                 )
@@ -63,10 +72,12 @@ class YahooNewsSentimentProvider:
             except Exception as exc:  # pylint: disable=broad-except
                 last_exc = exc
 
-        if headlines is None:
+        if articles is None:
             if last_exc is None:
                 raise NewsSentimentProviderError("yahoo news fetch failed")
             raise NewsSentimentProviderError(str(last_exc)) from last_exc
+
+        headlines = [article.title for article in articles]
 
         quality_flags = []
         if len(headlines) < 2:
@@ -77,11 +88,12 @@ class YahooNewsSentimentProvider:
             fetched_at=utc_now(),
             headlines=headlines,
             sentiment_signals=_derive_sentiment_signals(headlines),
+            articles=articles,
             quality_flags=quality_flags,
         )
 
     @staticmethod
-    def _fetch_sync(ticker: str, max_headlines: int) -> list[str]:
+    def _fetch_sync(ticker: str, max_headlines: int) -> list[NewsArticle]:
         try:
             import yfinance as yf
         except Exception as exc:  # pylint: disable=broad-except
@@ -92,7 +104,7 @@ class YahooNewsSentimentProvider:
             raise NewsSentimentProviderError("empty yahoo news response")
 
         seen: set[str] = set()
-        headlines: list[str] = []
+        articles: list[NewsArticle] = []
         for item in payload:
             if not isinstance(item, dict):
                 continue
@@ -103,13 +115,20 @@ class YahooNewsSentimentProvider:
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
-            headlines.append(normalized)
-            if len(headlines) >= max_headlines:
+            articles.append(
+                NewsArticle(
+                    title=normalized,
+                    url=YahooNewsSentimentProvider._extract_url(item),
+                    source=YahooNewsSentimentProvider._extract_source(item),
+                    published_at=YahooNewsSentimentProvider._extract_published_at(item),
+                )
+            )
+            if len(articles) >= max_headlines:
                 break
 
-        if not headlines:
+        if not articles:
             raise NewsSentimentProviderError("no usable Yahoo news headlines")
-        return headlines
+        return articles
 
     @staticmethod
     def _extract_title(item: dict) -> str | None:
@@ -126,6 +145,52 @@ class YahooNewsSentimentProvider:
             nested_headline = content.get("headline")
             if isinstance(nested_headline, str) and nested_headline.strip():
                 return nested_headline
+        return None
+
+    @staticmethod
+    def _extract_url(item: dict) -> str | None:
+        direct_link = item.get("link")
+        if isinstance(direct_link, str) and direct_link.strip():
+            return direct_link.strip()
+
+        content = item.get("content")
+        if isinstance(content, dict):
+            # Newer Yahoo payloads nest the canonical URL under content.
+            click_through = content.get("clickThroughUrl")
+            if isinstance(click_through, dict):
+                url = click_through.get("url")
+                if isinstance(url, str) and url.strip():
+                    return url.strip()
+            canonical = content.get("canonicalUrl")
+            if isinstance(canonical, dict):
+                url = canonical.get("url")
+                if isinstance(url, str) and url.strip():
+                    return url.strip()
+        return None
+
+    @staticmethod
+    def _extract_source(item: dict) -> str | None:
+        publisher = item.get("publisher")
+        if isinstance(publisher, str) and publisher.strip():
+            return publisher.strip()
+
+        content = item.get("content")
+        if isinstance(content, dict):
+            provider = content.get("provider")
+            if isinstance(provider, dict):
+                name = provider.get("displayName") or provider.get("name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+        return None
+
+    @staticmethod
+    def _extract_published_at(item: dict) -> str | None:
+        content = item.get("content")
+        if isinstance(content, dict):
+            for key in ("pubDate", "displayTime"):
+                value = content.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
         return None
 
 

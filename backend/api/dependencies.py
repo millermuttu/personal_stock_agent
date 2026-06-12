@@ -5,11 +5,13 @@ from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from backend.db.paper_repository import PostgresPaperRepository
 from backend.db.postgres_repository import PostgresRunRepository
 from backend.orchestrator.engine import OrchestratorEngine
 from backend.db.session import SessionLocal
 from backend.llm.client import LLMClient
 from backend.services.analysis_service import AnalysisService
+from backend.services.paper_trading_service import PaperTradingService
 from backend.services.snapshot_builder import SnapshotBuilder
 from backend.services.providers.fundamentals import (
     FundamentalsProvider,
@@ -110,4 +112,19 @@ def get_analysis_service() -> AnalysisService:
     return AnalysisService(
         repository=get_repository(),
         orchestrator=get_orchestrator(),
+        market_data_provider=get_market_data_provider(),
+    )
+
+
+@lru_cache
+def get_paper_repository() -> PostgresPaperRepository:
+    return PostgresPaperRepository(get_session_factory())
+
+
+@lru_cache
+def get_paper_trading_service() -> PaperTradingService:
+    return PaperTradingService(
+        repository=get_paper_repository(),
+        run_repository=get_repository(),
+        market_data_provider=get_market_data_provider(),
     )

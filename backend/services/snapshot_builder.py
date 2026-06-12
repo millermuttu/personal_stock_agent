@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import hashlib
 
-from backend.models.schemas import DataSnapshot, ProviderManifest, SnapshotFeatures, Timeframe
+from backend.models.schemas import (
+    DataSnapshot,
+    NewsArticle,
+    ProviderManifest,
+    SnapshotFeatures,
+    Timeframe,
+)
 from backend.services.providers.fundamentals import (
     FundamentalsProvider,
     YahooFundamentalsProvider,
@@ -88,7 +94,18 @@ class SnapshotBuilder:
                 price_history=price_history,
                 technical_indicators=technical_indicators,
                 fundamental_metrics=fundamentals_data.metrics,
+                sector=fundamentals_data.sector,
+                industry=fundamentals_data.industry,
                 news_items=news_data.headlines,
+                news_articles=[
+                    NewsArticle(
+                        title=article.title,
+                        url=article.url,
+                        source=article.source,
+                        published_at=article.published_at,
+                    )
+                    for article in news_data.articles
+                ],
                 sentiment_signals=news_data.sentiment_signals,
                 risk_metrics=risk_metrics,
             ),

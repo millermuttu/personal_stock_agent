@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
 from typing import Awaitable, Callable
 
 from backend.agents import fundamental_analysis, risk_analysis, sentiment_analysis, technical_analysis
@@ -22,6 +21,7 @@ from backend.models.schemas import (
     utc_now,
 )
 from backend.orchestrator.policies import REQUIRED_AGENTS_BY_TIMEFRAME, is_success_like, selected_agents_for_timeframe
+from backend.orchestrator.scoring import compute_quant_baseline
 from backend.services.snapshot_builder import SnapshotBuilder
 
 
@@ -177,14 +177,15 @@ class OrchestratorEngine:
             ), RunStatus.PARTIAL_SUCCESS
 
         risk_level, risk_constraint = self._extract_risk_state(run)
+        # A hard risk block forbids initiating or holding exposure (BUY/HOLD),
+        # but still permits a SELL — exiting is the risk-reducing action, so a
+        # high-risk + bearish-majority case should surface as SELL, not be
+        # swallowed into no_recommendation.
+        risk_blocked = risk_constraint == RecommendationConstraint.BLOCK
 
-        if risk_constraint == RecommendationConstraint.BLOCK:
-            return self._no_recommendation_report(
-                run=run,
-                reason="Risk agent returned BLOCK constraint.",
-                risk_level=risk_level,
-                llm_fallback_reason="risk_constraint_blocked",
-            ), (RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS)
+        # Quantitative fusion of the directional agent scores — used directly by
+        # the heuristic and handed to the LLM as an anchor.
+        baseline = compute_quant_baseline(run.agent_reports, run.timeframe)
 
         llm_fallback_reason: str | None = None
         if self._llm_client.is_enabled:
@@ -194,17 +195,17 @@ class OrchestratorEngine:
                     required_agents=required_agents,
                     selected_agents=selected_agents,
                     success_like_selected=success_like_selected,
+                    baseline=baseline,
                 )
 
-                if llm_output.final_verdict in {FinalVerdict.BUY, FinalVerdict.SELL} and (
-                    risk_constraint == RecommendationConstraint.BLOCK
-                ):
+                if risk_blocked and llm_output.final_verdict != FinalVerdict.SELL:
                     return self._no_recommendation_report(
                         run=run,
-                        reason="LLM returned directional verdict but risk constraints blocked action.",
+                        reason="Risk constraints block any non-SELL recommendation.",
                         risk_level=risk_level,
                         decision_factors=llm_output.decision_factors,
                         conflicting_signals=llm_output.conflicting_signals,
+                        llm_fallback_reason="risk_constraint_blocked",
                     ), (RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS)
 
                 final_report = FinalVerdictReport(
@@ -218,6 +219,7 @@ class OrchestratorEngine:
                     model_version=self._llm_client.model_name,
                     prompt_version=FINAL_VERDICT_PROMPT_VERSION,
                     llm_fallback_reason=None,
+                    bias_score=llm_output.bias_score,
                     confidence=llm_output.confidence,
                     risk_level=llm_output.risk_level,
                     decision_factors=llm_output.decision_factors[:6],
@@ -238,6 +240,7 @@ class OrchestratorEngine:
             success_like_selected,
             risk_level,
             risk_constraint,
+            baseline,
             llm_fallback_reason=llm_fallback_reason,
         )
 
@@ -247,77 +250,72 @@ class OrchestratorEngine:
         success_like_selected: bool,
         risk_level: RiskLevel,
         risk_constraint: RecommendationConstraint,
+        baseline: dict | None,
         *,
         llm_fallback_reason: str | None = None,
     ) -> tuple[FinalVerdictReport, RunStatus]:
         reports = run.agent_reports
-        votes = []
-        decision_factors = []
+        terminal_status = RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS
 
-        tech_report = reports.get("technical_analysis")
-        if tech_report is not None and is_success_like(tech_report.status):
-            signal = tech_report.result.get("trade_signal")
-            if signal in {"buy", "hold", "sell"}:
-                votes.append(signal)
-            decision_factors.extend(tech_report.key_points[:1])
+        decision_factors: list[str] = []
+        for agent_name in ("technical_analysis", "fundamental_analysis", "sentiment_analysis"):
+            report = reports.get(agent_name)
+            if report is not None and is_success_like(report.status):
+                decision_factors.extend(report.key_points[:1])
 
-        fundamental_report = reports.get("fundamental_analysis")
-        if fundamental_report is not None and is_success_like(fundamental_report.status):
-            signal = fundamental_report.result.get("investment_signal")
-            if signal in {"buy", "hold", "sell"}:
-                votes.append(signal)
-            decision_factors.extend(fundamental_report.key_points[:1])
-
-        sentiment_report = reports.get("sentiment_analysis")
-        if sentiment_report is not None and is_success_like(sentiment_report.status):
-            sentiment = sentiment_report.result.get("sentiment")
-            if sentiment == "positive":
-                votes.append("buy")
-            elif sentiment == "negative":
-                votes.append("sell")
-            decision_factors.extend(sentiment_report.key_points[:1])
-
-        conflicts = []
-        if "buy" in votes and "sell" in votes:
-            conflicts.append("bullish_and_bearish_signals_conflict")
-
-        if not votes:
+        if baseline is None:
             return self._no_recommendation_report(
                 run=run,
-                reason="No valid directional votes available from agent outputs.",
+                reason="No directional agent scores available to synthesize.",
+                risk_level=risk_level,
+                decision_factors=decision_factors,
+                llm_fallback_reason=llm_fallback_reason or "heuristic_no_directional_scores",
+            ), terminal_status
+
+        weighted_score = baseline["weighted_score"]
+        verdict = FinalVerdict(baseline["suggested_verdict"])
+        contributions = baseline["contributions"]
+
+        # A genuine conflict = opposing contributions both meaningfully strong.
+        has_bull = any(c["score"] > 0.15 for c in contributions.values())
+        has_bear = any(c["score"] < -0.15 for c in contributions.values())
+        conflicts = ["bullish_and_bearish_signals_conflict"] if has_bull and has_bear else []
+
+        # Under a hard risk block, only a de-risking SELL is allowed through;
+        # BUY/HOLD collapse to no_recommendation.
+        if risk_constraint == RecommendationConstraint.BLOCK and verdict != FinalVerdict.SELL:
+            return self._no_recommendation_report(
+                run=run,
+                reason="Risk constraints block any non-SELL recommendation.",
                 risk_level=risk_level,
                 decision_factors=decision_factors,
                 conflicting_signals=conflicts,
-                llm_fallback_reason=llm_fallback_reason or "heuristic_no_directional_votes",
-            ), (RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS)
-
-        counts = Counter(votes)
-        if counts["buy"] > max(counts["sell"], counts["hold"]):
-            verdict = FinalVerdict.BUY
-        elif counts["sell"] > max(counts["buy"], counts["hold"]):
-            verdict = FinalVerdict.SELL
-        else:
-            verdict = FinalVerdict.HOLD
+                llm_fallback_reason=llm_fallback_reason or "risk_constraint_blocked",
+            ), terminal_status
 
         final_report = FinalVerdictReport(
             run_id=run.run_id,
             target_id=run.target_id,
             timeframe=run.timeframe,
             as_of=run.snapshot.as_of if run.snapshot else utc_now(),
-            status=RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS,
+            status=terminal_status,
             final_verdict=verdict,
             synthesis_source=FinalSynthesisSource.HEURISTIC,
             model_version=None,
             prompt_version=HEURISTIC_SYNTHESIS_VERSION,
-            llm_fallback_reason=llm_fallback_reason or "heuristic_policy",
-            confidence=0.72 if verdict != FinalVerdict.NO_RECOMMENDATION else 0.45,
+            llm_fallback_reason=llm_fallback_reason or "heuristic_weighted_score",
+            bias_score=weighted_score,
+            confidence=baseline["confidence"],
             risk_level=risk_level,
             decision_factors=decision_factors[:4],
             conflicting_signals=conflicts,
             required_followups=[],
-            summary=f"Final verdict is {verdict.value} using synthesized agent signals with risk-first checks.",
+            summary=(
+                f"Final verdict is {verdict.value} from a weighted agent score of "
+                f"{weighted_score:+.2f} (risk-first checks applied)."
+            ),
         )
-        return final_report, (RunStatus.COMPLETED if success_like_selected else RunStatus.PARTIAL_SUCCESS)
+        return final_report, terminal_status
 
     @staticmethod
     def _extract_risk_state(run) -> tuple[RiskLevel, RecommendationConstraint]:

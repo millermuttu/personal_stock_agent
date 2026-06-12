@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from backend.api.dependencies import get_analysis_service
 from backend.db.repositories import RunNotFoundError
-from backend.models.schemas import AnalysisRequest, AnalysisRunResponse, CreateAnalysisResponse
+from backend.models.schemas import (
+    AnalysisRequest,
+    AnalysisRunResponse,
+    AnalysisRunSummary,
+    CreateAnalysisResponse,
+)
 from backend.services.analysis_service import AnalysisService
 
 
@@ -21,6 +26,14 @@ async def create_analysis(
     service: AnalysisService = Depends(get_analysis_service),
 ) -> CreateAnalysisResponse:
     return await service.create_analysis(payload)
+
+
+@router.get("/analysis", response_model=list[AnalysisRunSummary])
+async def list_analysis_runs(
+    limit: int = Query(default=50, ge=1, le=200),
+    service: AnalysisService = Depends(get_analysis_service),
+) -> list[AnalysisRunSummary]:
+    return await service.list_runs(limit)
 
 
 @router.get("/analysis/{run_id}", response_model=AnalysisRunResponse)

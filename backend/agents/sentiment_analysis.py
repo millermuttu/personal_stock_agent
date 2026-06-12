@@ -83,6 +83,15 @@ async def run(
     if provider_score is not None:
         signals["provider_sentiment_score"] = provider_score
 
+    # Continuous score in [-1, +1]: prefer the provider's headline score, else
+    # fall back to the lexical hit balance.
+    if provider_score is not None:
+        sentiment_score = max(-1.0, min(1.0, float(provider_score)))
+    else:
+        total_hits = positive_hits + negative_hits
+        sentiment_score = 0.0 if total_hits == 0 else (positive_hits - negative_hits) / total_hits
+    sentiment_score = round(sentiment_score, 4)
+
     return build_agent_report(
         run_id=run_id,
         snapshot_id=snapshot.snapshot_id,
@@ -97,6 +106,7 @@ async def run(
         signals=signals,
         result={
             "sentiment": sentiment,
+            "score": sentiment_score,
             "key_themes": themes,
             "sentiment_risks": risks,
             "provider_sentiment_score": provider_score,

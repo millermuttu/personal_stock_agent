@@ -18,6 +18,8 @@ class FundamentalsFetchResult:
     fetched_at: datetime
     metrics: dict[str, float]
     beta: float | None = None
+    sector: str | None = None
+    industry: str | None = None
     quality_flags: list[str] = field(default_factory=list)
 
 
@@ -35,7 +37,7 @@ class YahooFundamentalsProvider:
 
     async def fetch_metrics(self, *, ticker: str, timeframe: Timeframe) -> FundamentalsFetchResult:
         del timeframe
-        fetched: tuple[dict[str, float], float | None] | None = None
+        fetched: tuple[dict[str, float], float | None, str | None, str | None] | None = None
         last_exc: Exception | None = None
         for _ in range(self._max_attempts):
             try:
@@ -52,18 +54,20 @@ class YahooFundamentalsProvider:
                 raise FundamentalsProviderError("yahoo fundamentals fetch failed")
             raise FundamentalsProviderError(str(last_exc)) from last_exc
 
-        metrics, beta = fetched
+        metrics, beta, sector, industry = fetched
         quality_flags = self._quality_flags(metrics)
         return FundamentalsFetchResult(
             provider_name=self.provider_name,
             fetched_at=utc_now(),
             metrics=metrics,
             beta=beta,
+            sector=sector,
+            industry=industry,
             quality_flags=quality_flags,
         )
 
     @staticmethod
-    def _fetch_sync(ticker: str) -> tuple[dict[str, float], float | None]:
+    def _fetch_sync(ticker: str) -> tuple[dict[str, float], float | None, str | None, str | None]:
         try:
             import yfinance as yf
         except Exception as exc:  # pylint: disable=broad-except
@@ -92,6 +96,11 @@ class YahooFundamentalsProvider:
         beta_raw = data.get("beta")
         beta = float(beta_raw) if isinstance(beta_raw, (int, float)) else None
 
+        sector = data.get("sector")
+        sector = sector.strip() if isinstance(sector, str) and sector.strip() else None
+        industry = data.get("industry")
+        industry = industry.strip() if isinstance(industry, str) and industry.strip() else None
+
         metrics = {
             "revenue_growth": round(revenue_growth, 4),
             "profit_margin": round(profit_margin, 4),
@@ -100,7 +109,7 @@ class YahooFundamentalsProvider:
             "pe_ratio": round(pe_ratio, 4),
             "fcf": round(fcf_billions, 4),
         }
-        return metrics, (round(beta, 4) if beta is not None else None)
+        return metrics, (round(beta, 4) if beta is not None else None), sector, industry
 
     @staticmethod
     def _to_float(value, default: float) -> float:
